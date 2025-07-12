@@ -140,8 +140,8 @@ async function updateStats() {
 
 export async function aggregateStats(fromTimeMs, toTimeMs) {
     // Convert timestamps to date strings
-    const fromDate = formatISO(new Date(fromTimeMs), { representation: 'date' });
-    const toDate = formatISO(new Date(toTimeMs), { representation: 'date' });
+    const fromDate = formatISO(new Date(fromTimeMs));
+    const toDate = formatISO(new Date(toTimeMs));
 
     // Always update data to get the latest commits
     await updateStats();
