@@ -7,7 +7,7 @@ action = sys.argv[1] if len(sys.argv) > 1 else None
 if not action:
     try:
         subprocess.run(["git", "pull"])
-        subprocess.run(["docker", "compose", "up", "-d", "--force-recreate", "--no-deps", "--build"])
+        subprocess.run(["docker", "compose", "up", "-d", "--build"])
         print("\nService is running. Use 'python run.py logs' to view logs.\n")
         sys.exit(0)
     except KeyboardInterrupt:
