@@ -16,7 +16,7 @@ const headers = {
 };
 
 // Initialize SQLite database
-const db = new sqlite3.Database('./data/github_stats.db');
+const db = new sqlite3.Database('./github_stats.db');
 const dbRun = promisify(db.run.bind(db));
 const dbGet = promisify(db.get.bind(db));
 const dbAll = promisify(db.all.bind(db));

@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  grafana-data:
+    build: .
+    container_name: grafana-data-prod
+    ports:
+      - "8005:8005"
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./github_stats.db:/app/github_stats.db

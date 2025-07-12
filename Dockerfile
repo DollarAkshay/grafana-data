@@ -2,11 +2,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json .
-RUN npm install
+COPY package.json package-lock.json* ./
+RUN npm install --production
 
 COPY . .
 
-EXPOSE 8000
+# Use the same port as your app (default 8005, can be overridden by env)
+EXPOSE 8005
 
-CMD ["npm", "start"]
+CMD ["node", "src/index.js"]
