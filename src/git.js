@@ -1,8 +1,9 @@
 import fetch from 'node-fetch';
-import { parseISO, formatISO, startOfWeek, subDays } from 'date-fns';
+import { parseISO, formatISO, subDays } from 'date-fns';
 import dotenv from 'dotenv';
 import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -16,22 +17,27 @@ const headers = {
 };
 
 // Initialize SQLite database
-const db = new sqlite3.Database('./github_stats.db');
+const dbPath = './db/github_stats.db';
+if (!fs.existsSync(dbPath)) {
+  console.log('Database file does not exist. A new one will be created by SQLite.');
+}
+
+const db = new sqlite3.Database(dbPath);
 const dbRun = promisify(db.run.bind(db));
 const dbGet = promisify(db.get.bind(db));
 const dbAll = promisify(db.all.bind(db));
 
-// Initialize database schema
-async function initializeDB() {
+// Initialize database schema at module level
+(async () => {
   await dbRun(`
     CREATE TABLE IF NOT EXISTS github_stats (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       repo TEXT NOT NULL,
-      week TEXT NOT NULL,
+      day TEXT NOT NULL,
       additions INTEGER DEFAULT 0,
       deletions INTEGER DEFAULT 0,
       last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(repo, week)
+      UNIQUE(repo, day)
     )
   `);
   
@@ -45,7 +51,7 @@ async function initializeDB() {
       UNIQUE(repo, sha)
     )
   `);
-}
+})();
 
 async function fetchOrgRepos() {
   const res = await fetch(`https://api.github.com/orgs/${ORG_NAME}/repos?per_page=100`, { headers });
@@ -88,18 +94,34 @@ async function markCommitProcessed(repo, sha, commitDate) {
   `, [repo, sha, commitDate]);
 }
 
-async function upsertStats(repo, week, additions, deletions) {
+async function upsertStats(repo, day, additions, deletions) {
   await dbRun(`
-    INSERT OR REPLACE INTO github_stats (repo, week, additions, deletions, last_updated)
+    INSERT OR REPLACE INTO github_stats (repo, day, additions, deletions, last_updated)
     VALUES (?, ?, 
-      COALESCE((SELECT additions FROM github_stats WHERE repo = ? AND week = ?), 0) + ?,
-      COALESCE((SELECT deletions FROM github_stats WHERE repo = ? AND week = ?), 0) + ?,
+      COALESCE((SELECT additions FROM github_stats WHERE repo = ? AND day = ?), 0) + ?,
+      COALESCE((SELECT deletions FROM github_stats WHERE repo = ? AND day = ?), 0) + ?,
       CURRENT_TIMESTAMP)
-  `, [repo, week, repo, week, additions, repo, week, deletions]);
+  `, [repo, day, repo, day, additions, repo, day, deletions]);
 }
 
 async function updateStatsForTimeRange(fromDate, toDate) {
-  await initializeDB();
+  // Check if we have recent data (within last 24 hours) for this range
+  const latestUpdate = await dbGet(`
+    SELECT MAX(last_updated) as latest_update 
+    FROM github_stats
+    WHERE day >= ? AND day <= ?
+  `, [fromDate, toDate]);
+  
+  if (latestUpdate?.latest_update) {
+    const lastUpdate = new Date(latestUpdate.latest_update);
+    const oneDayAgo = subDays(new Date(), 1);
+    
+    // Skip update if data is fresh (less than 24 hours old)
+    if (lastUpdate > oneDayAgo) {
+      console.log('Data is fresh, skipping update');
+      return;
+    }
+  }
   
   // Get the latest commit date from our database
   const latestDate = await getLatestCommitDate();
@@ -135,11 +157,11 @@ async function updateStatsForTimeRange(fromDate, toDate) {
       }
       
       const commitDate = commit.commit.author.date;
-      const week = formatISO(startOfWeek(parseISO(commitDate)), { representation: 'date' });
+      const day = formatISO(parseISO(commitDate), { representation: 'date' });
       
       try {
         const stats = await fetchCommitStats(repo, commit.sha);
-        await upsertStats(repo, week, stats.additions, stats.deletions);
+        await upsertStats(repo, day, stats.additions, stats.deletions);
         await markCommitProcessed(repo, commit.sha, commitDate);
         
         // Add small delay to avoid rate limiting
@@ -153,102 +175,31 @@ async function updateStatsForTimeRange(fromDate, toDate) {
   console.log('Stats update completed');
 }
 
-export async function aggregateStats(fromTime, toTime) {
-  await initializeDB();
-  
-  // Convert timestamps to date strings if needed
-  let fromDate = null;
-  let toDate = null;
-  
-  if (fromTime) {
-    // Handle both Unix timestamps (milliseconds) and ISO strings
-    const from = typeof fromTime === 'string' ? parseISO(fromTime) : new Date(parseInt(fromTime));
-    fromDate = formatISO(from, { representation: 'date' });
-  }
-  
-  if (toTime) {
-    // Handle both Unix timestamps (milliseconds) and ISO strings
-    const to = typeof toTime === 'string' ? parseISO(toTime) : new Date(parseInt(toTime));
-    toDate = formatISO(to, { representation: 'date' });
-  }
-  
-  // Check if we need to update data
-  const shouldUpdate = await needsDataUpdate(fromDate, toDate);
-  
-  if (shouldUpdate) {
-    console.log('Updating data to ensure completeness...');
-    await updateStatsForTimeRange(fromDate, toDate);
-  }
-  
-  // Build query based on time range
-  let query = `
-    SELECT repo, week, additions, deletions, last_updated
+export async function aggregateStats(fromTimeMs, toTimeMs) {
+  // Convert timestamps to date strings
+  const fromDate = formatISO(new Date(fromTimeMs), { representation: 'date' });
+  const toDate = formatISO(new Date(toTimeMs), { representation: 'date' });
+
+  // Always update data for the requested time range
+  await updateStatsForTimeRange(fromDate, toDate);
+
+  // Query data for the specified time range
+  const query = `
+    SELECT repo, day, additions, deletions, last_updated
     FROM github_stats 
+    WHERE day >= ? AND day <= ?
+    ORDER BY day DESC, repo ASC
   `;
-  let params = [];
   
-  if (fromDate && toDate) {
-    query += ` WHERE week >= ? AND week <= ?`;
-    params = [fromDate, toDate];
-  } else if (fromDate) {
-    query += ` WHERE week >= ?`;
-    params = [fromDate];
-  } else if (toDate) {
-    query += ` WHERE week <= ?`;
-    params = [toDate];
-  }
-  
-  query += ` ORDER BY week DESC, repo ASC`;
-  
-  const results = await dbAll(query, params);
-  
+  const results = await dbAll(query, [fromDate, toDate]);
+
   // Transform data for Grafana compatibility
   return results.map(row => ({
     repo: row.repo,
-    week: row.week,
+    day: row.day,
     additions: row.additions,
     deletions: row.deletions,
     total_changes: row.additions + row.deletions,
-    timestamp: new Date(row.week).getTime() // Add timestamp for Grafana
+    timestamp: new Date(row.day).getTime() // Add timestamp for Grafana
   }));
-}
-
-async function needsDataUpdate(fromDate, toDate) {
-  // Always update if no data exists
-  const dataCount = await dbGet('SELECT COUNT(*) as count FROM github_stats');
-  if (dataCount.count === 0) {
-    return true;
-  }
-  
-  // Check if we have recent data (within last 24 hours)
-  const latestUpdate = await dbGet(`
-    SELECT MAX(last_updated) as latest_update 
-    FROM github_stats
-  `);
-  
-  if (latestUpdate?.latest_update) {
-    const lastUpdate = new Date(latestUpdate.latest_update);
-    const oneDayAgo = subDays(new Date(), 1);
-    
-    // Update if data is older than 24 hours
-    if (lastUpdate < oneDayAgo) {
-      return true;
-    }
-  }
-  
-  // Check if requested time range has gaps in our data
-  if (fromDate && toDate) {
-    const gapCheck = await dbGet(`
-      SELECT COUNT(*) as count 
-      FROM github_stats 
-      WHERE week >= ? AND week <= ?
-    `, [fromDate, toDate]);
-    
-    // If we have very little data for the requested range, update
-    if (gapCheck.count < 5) {
-      return true;
-    }
-  }
-  
-  return false;
 }

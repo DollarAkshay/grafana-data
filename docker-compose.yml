@@ -8,4 +8,4 @@ services:
       - .env
     restart: unless-stopped
     volumes:
-      - ./github_stats.db:/app/github_stats.db
+      - ./db:/app/db
