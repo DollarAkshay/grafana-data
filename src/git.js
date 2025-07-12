@@ -140,8 +140,8 @@ async function updateStats() {
 
 export async function aggregateStats(fromTimeMs, toTimeMs) {
     // Convert timestamps to date strings
-    const fromDate = formatISO(new Date(fromTimeMs));
-    const toDate = formatISO(new Date(toTimeMs));
+    const fromDateTime = formatISO(new Date(fromTimeMs));
+    const toDateTime = formatISO(new Date(toTimeMs));
 
     // Always update data to get the latest commits
     await updateStats();
@@ -154,8 +154,8 @@ export async function aggregateStats(fromTimeMs, toTimeMs) {
         GROUP BY date
         ORDER BY date DESC
     `;
-    
-    const results = await dbAll(query, [fromDate, toDate]);
+
+    const results = await dbAll(query, [fromDateTime, toDateTime]);
 
     // Transform data for Grafana compatibility
     return results.map(row => ({
