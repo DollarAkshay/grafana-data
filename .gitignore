@@ -1,0 +1,20 @@
+# Node
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs
+*.log
+
+# OS
+Thumbs.db
+
+# Misc
+*.swp
